@@ -1,0 +1,33 @@
+# Environment & secrets
+.env
+.env:Zone.Identifier
+
+# Database
+*.db
+
+# Zone.Identifier files (Windows/WSL metadata)
+*:Zone.Identifier
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# uv
+.python-version
