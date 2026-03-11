@@ -17,7 +17,7 @@ import numpy as np
 from src.database import SessionLocal, Product, DatabaseOperations
 from src.api_wrappers.keepa_api import get_keepa_api
 from src.api_wrappers.amazon_sp_api import get_sp_api
-from src.config import settings, SALES_RANK_THRESHOLDS, SELLER_COUNT_THRESHOLDS, PRICE_STABILITY_THRESHOLDS
+from src.config import settings, SALES_RANK_THRESHOLDS, SELLER_COUNT_THRESHOLDS, PRICE_STABILITY_THRESHOLDS, CATEGORY_SALES_CURVES
 from src.models.discovery_model import DiscoveryModel
 
 logging.basicConfig(
@@ -114,17 +114,23 @@ class ProductDiscoveryEngine:
             count_new = data.get("COUNT_NEW", [])
             avg_seller_count = last_valid(count_new) or 10.0
 
-            # --- Estimated monthly sales (rough estimate from sales rank) ---
+            # --- Estimated monthly sales (category-specific power-law curve) ---
             if avg_sales_rank > 0:
-                estimated_monthly_sales = max(1, int(100000 / avg_sales_rank))
+                curve = CATEGORY_SALES_CURVES.get(category, CATEGORY_SALES_CURVES["default"])
+                multiplier, exponent = curve
+                estimated_monthly_sales = max(1, int(multiplier * (avg_sales_rank ** exponent)))
             else:
                 estimated_monthly_sales = 0
+
+            # --- Historical average price ---
+            price_history_avg = avg_valid(new_data) or avg_valid(amazon_data) or avg_price
 
             features = {
                 "asin": asin,
                 "title": title,
                 "category": category,
                 "avg_price": float(avg_price),
+                "price_history_avg": float(price_history_avg),
                 "price_std": float(price_std),
                 "price_stability": float(price_stability),
                 "avg_sales_rank": float(avg_sales_rank),
@@ -141,28 +147,47 @@ class ProductDiscoveryEngine:
             logger.error(f"✗ Error extracting features: {e}")
             return None
 
-    def calculate_profitability(self, asin: str, price: Decimal) -> Dict[str, Any]:
+    def calculate_profitability(self, asin: str, price: Decimal,
+                               category: str = "") -> Dict[str, Any]:
         """
         Estimate profitability for a product.
+
+        Uses real supplier cost if available, otherwise estimates COGS
+        at 50% of selling price with an uncertainty penalty.
 
         Args:
             asin: Product ASIN
             price: Current selling price
+            category: Product category for fee estimation
 
         Returns:
             Profitability metrics
         """
         try:
-            # Get fee estimates from Amazon
-            fees = self.sp_api.estimate_fees(asin, price)
+            # Get fee estimates from Amazon (category-aware)
+            fees = self.sp_api.estimate_fees(asin, price, category=category)
 
-            # Estimate cost of goods (this would come from supplier data in Phase 3)
-            # For now, use a rough estimate of 40% of selling price
-            estimated_cogs = price * Decimal("0.40")
+            # Try to get real supplier cost from DB
+            from src.database import ProductSupplier
+            real_cost = self.session.query(ProductSupplier.supplier_cost)\
+                .filter(ProductSupplier.asin == asin, ProductSupplier.supplier_cost > 0)\
+                .order_by(ProductSupplier.supplier_cost.asc()).first()
+
+            if real_cost:
+                estimated_cogs = Decimal(str(real_cost[0]))
+                is_estimated = False
+            else:
+                # Conservative estimate: 50% of selling price
+                estimated_cogs = price * Decimal("0.50")
+                is_estimated = True
 
             # Calculate profit
             total_fees = fees["referral_fee"] + fees["fba_fee"] + fees["variable_closing_fee"]
             net_profit = price - estimated_cogs - total_fees
+
+            # Apply uncertainty penalty when COGS is estimated
+            if is_estimated and net_profit > 0:
+                net_profit = net_profit * Decimal("0.60")  # 40% uncertainty discount
 
             # Calculate margins
             profit_margin = (net_profit / price) if price > 0 else Decimal("0")
@@ -170,6 +195,7 @@ class ProductDiscoveryEngine:
 
             return {
                 "estimated_cogs": float(estimated_cogs),
+                "is_estimated_cogs": is_estimated,
                 "referral_fee": float(fees["referral_fee"]),
                 "fba_fee": float(fees["fba_fee"]),
                 "total_fees": float(total_fees),
@@ -182,6 +208,7 @@ class ProductDiscoveryEngine:
             logger.error(f"✗ Error calculating profitability for {asin}: {e}")
             return {
                 "estimated_cogs": 0,
+                "is_estimated_cogs": True,
                 "referral_fee": 0,
                 "fba_fee": 0,
                 "total_fees": 0,
@@ -262,8 +289,9 @@ class ProductDiscoveryEngine:
                 # Get current price
                 current_price = Decimal(str(features.get("avg_price", 0)))
 
-                # Calculate profitability
-                profitability = self.calculate_profitability(asin, current_price)
+                # Calculate profitability (category-aware)
+                profitability = self.calculate_profitability(asin, current_price,
+                                                            category=features["category"])
 
                 # Score the product
                 score = self.score_product(features, profitability)
@@ -274,6 +302,7 @@ class ProductDiscoveryEngine:
                     "title": features["title"],
                     "category": features["category"],
                     "current_price": current_price,
+                    "price_history_avg": Decimal(str(features.get("price_history_avg", 0))),
                     "sales_rank": int(features["avg_sales_rank"]),
                     "estimated_monthly_sales": features["estimated_monthly_sales"],
                     "profit_potential": Decimal(str(profitability["net_profit"])),
@@ -281,6 +310,8 @@ class ProductDiscoveryEngine:
                     "price_stability": features["price_stability"],
                     "opportunity_score": score,
                     "is_underserved": score >= 60,  # Threshold for underserved
+                    "estimated_cogs": profitability.get("estimated_cogs", 0),
+                    "total_fees": profitability.get("total_fees", 0),
                 }
 
                 opportunities.append(opportunity)
@@ -314,6 +345,7 @@ class ProductDiscoveryEngine:
                 if existing:
                     # Update existing product
                     existing.current_price = opp["current_price"]
+                    existing.price_history_avg = opp.get("price_history_avg")
                     existing.sales_rank = opp["sales_rank"]
                     existing.estimated_monthly_sales = opp["estimated_monthly_sales"]
                     existing.profit_potential = opp["profit_potential"]
@@ -329,6 +361,7 @@ class ProductDiscoveryEngine:
                         title=opp["title"],
                         category=opp["category"],
                         current_price=opp["current_price"],
+                        price_history_avg=opp.get("price_history_avg"),
                         sales_rank=opp["sales_rank"],
                         estimated_monthly_sales=opp["estimated_monthly_sales"],
                         profit_potential=opp["profit_potential"],
@@ -347,7 +380,32 @@ class ProductDiscoveryEngine:
                 logger.error(f"✗ Error saving opportunity {opp.get('asin')}: {e}")
                 self.session.rollback()
 
+        # Record performance snapshots for tracking over time
+        self._record_performance_snapshots(opportunities)
+
         return saved
+
+    def _record_performance_snapshots(self, opportunities: List[Dict[str, Any]]):
+        """Record a performance snapshot for each product for historical tracking."""
+        from src.database import Performance
+        for opp in opportunities:
+            try:
+                perf = Performance(
+                    asin=opp["asin"],
+                    units_sold=0,  # Unknown without order data
+                    revenue=Decimal("0"),
+                    cost_of_goods=Decimal(str(opp.get("estimated_cogs", 0))),
+                    amazon_fees=Decimal(str(opp.get("total_fees", 0))),
+                    net_profit=opp.get("profit_potential", Decimal("0")),
+                    buy_box_owned=False,
+                    price=opp.get("current_price"),
+                    sales_rank=opp.get("sales_rank"),
+                )
+                self.session.add(perf)
+                self.session.commit()
+            except Exception as e:
+                logger.warning(f"Could not record performance for {opp.get('asin')}: {e}")
+                self.session.rollback()
 
     def run(self, asins: List[str] = None) -> int:
         """

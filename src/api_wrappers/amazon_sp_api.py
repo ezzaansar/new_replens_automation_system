@@ -454,33 +454,40 @@ class AmazonSPAPI:
     # FEES
     # ========================================================================
     
-    def estimate_fees(self, asin: str, price: Decimal, quantity: int = 1) -> Dict[str, Decimal]:
+    def estimate_fees(self, asin: str, price: Decimal, quantity: int = 1,
+                      category: str = "") -> Dict[str, Decimal]:
         """
-        Estimate Amazon fees for a product using UK fee structure.
+        Estimate Amazon fees for a product using UK FBA fee structure.
 
         Note: Product Fees API requires a role not available to most sellers.
-        This method uses hardcoded UK Amazon FBM fees instead.
+        This method uses category-aware referral fees and FBA fulfillment fees.
 
         Args:
             asin: Product ASIN
             price: Selling price
             quantity: Number of units
+            category: Product category for referral fee lookup
 
         Returns:
             Dictionary with fee breakdown
         """
-        # UK Amazon FBM fee structure (no API required)
-        # Referral fee: 15% for most categories (stationery, beauty, home, etc.)
-        # Minimum referral fee: £0.25 (UK marketplace)
-        # No variable closing fee for UK FBM
-        referral_fee = max(price * Decimal('0.15'), Decimal('0.25'))
+        from src.config import AMAZON_REFERRAL_FEES, AMAZON_FBA_FEE_DEFAULT
 
-        logger.debug(f"UK fees for {asin} at £{price}: referral=£{referral_fee:.2f}")
+        # Category-aware referral fee
+        referral_rate = Decimal(str(
+            AMAZON_REFERRAL_FEES.get(category.lower(), AMAZON_REFERRAL_FEES["default"])
+        ))
+        referral_fee = max(price * referral_rate, Decimal('0.25'))
+
+        # FBA fulfillment fee (default large_standard since we don't have weight data)
+        fba_fee = AMAZON_FBA_FEE_DEFAULT
+
+        logger.debug(f"UK FBA fees for {asin} at £{price}: referral=£{referral_fee:.2f}, fba=£{fba_fee}")
 
         return {
             "referral_fee": referral_fee.quantize(Decimal('0.01')),
-            "fba_fee": Decimal('0'),  # FBM has no FBA fees
-            "variable_closing_fee": Decimal('0'),  # No closing fee for UK
+            "fba_fee": fba_fee,
+            "variable_closing_fee": Decimal('0'),
         }
 
 

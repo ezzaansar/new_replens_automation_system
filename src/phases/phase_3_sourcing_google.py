@@ -201,20 +201,24 @@ class GoogleSupplierMatchingEngine:
         return matches
 
     def _get_demo_suppliers(self) -> Dict[str, Any]:
-        """Fallback demo suppliers when Google unavailable."""
+        """Fallback suppliers when Google API is unavailable."""
+        logger.warning("Google API not configured — using fallback supplier platforms.")
+        logger.warning("Configure GOOGLE_API_KEY and GOOGLE_SEARCH_ENGINE_ID in .env for real supplier discovery.")
         return {
             'all_suppliers': [
                 {
                     'platform': 'Alibaba',
-                    'name': 'Demo Alibaba Supplier',
+                    'name': 'Alibaba Wholesale Marketplace',
                     'url': 'https://www.alibaba.com',
-                    'description': 'Demo supplier - Google API not configured'
+                    'supplier_type': 'wholesaler',
+                    'description': 'B2B wholesale marketplace — search for products manually. Google API not configured for automated search.'
                 },
                 {
                     'platform': 'Global Sources',
-                    'name': 'Demo Global Sources Supplier',
+                    'name': 'Global Sources Trade Platform',
                     'url': 'https://www.globalsources.com',
-                    'description': 'Demo supplier - Google API not configured'
+                    'supplier_type': 'wholesaler',
+                    'description': 'B2B trade platform — search for products manually. Google API not configured for automated search.'
                 }
             ]
         }

@@ -176,31 +176,68 @@ AMAZON_REFERRAL_FEES = {
     "apparel": 0.17,
     "electronics": 0.15,
     "home": 0.15,
+    "home & kitchen": 0.15,
     "toys": 0.15,
+    "toys & games": 0.15,
     "sports": 0.15,
+    "sports & outdoors": 0.15,
+    "beauty": 0.15,
+    "health & personal care": 0.15,
+    "musical instruments & dj": 0.15,
+    "musical instruments": 0.15,
+    "pet supplies": 0.15,
+    "office products": 0.15,
+    "automotive": 0.12,
+    "books": 0.15,
+    "computers & accessories": 0.07,
 }
 
+# UK FBA Fulfillment Fees (GBP) — approximate schedule
 AMAZON_FBA_FEES = {
     "small_standard": {
-        "weight_limit": 1.0,  # lbs
-        "fee": 2.50
+        "weight_limit": 0.46,  # kg
+        "fee": 2.15  # GBP
     },
     "large_standard": {
-        "weight_limit": 20.0,
-        "fee": 3.50
+        "weight_limit": 12.0,  # kg
+        "fee": 3.07  # GBP
     },
     "small_oversize": {
-        "weight_limit": 70.0,
-        "fee": 5.00
+        "weight_limit": 30.0,  # kg
+        "fee": 5.80  # GBP
     },
     "large_oversize": {
-        "weight_limit": 150.0,
-        "fee": 8.00
+        "weight_limit": 60.0,  # kg
+        "fee": 9.44  # GBP
     },
     "special_oversize": {
         "weight_limit": float('inf'),
-        "fee": 0.50  # Per pound
+        "fee": 12.50  # GBP
     }
+}
+
+# Default FBA fee when product weight/dimensions are unknown
+AMAZON_FBA_FEE_DEFAULT = Decimal("3.07")  # Large standard (most common)
+
+# Category-Specific Sales Estimation Curves
+# Uses power-law approximation: estimated_monthly_sales = multiplier * (rank ** exponent)
+# Based on publicly available research for UK marketplace
+CATEGORY_SALES_CURVES = {
+    "Electronics": (120000, -0.80),
+    "Computers & Accessories": (120000, -0.80),
+    "Home & Kitchen": (80000, -0.75),
+    "Home": (80000, -0.75),
+    "Musical Instruments & DJ": (20000, -0.70),
+    "Musical Instruments": (20000, -0.70),
+    "Sports & Outdoors": (60000, -0.75),
+    "Beauty": (70000, -0.75),
+    "Toys & Games": (90000, -0.78),
+    "Pet Supplies": (50000, -0.75),
+    "Office Products": (40000, -0.72),
+    "Automotive": (35000, -0.70),
+    "Health & Personal Care": (65000, -0.75),
+    "Books": (100000, -0.80),
+    "default": (50000, -0.75),
 }
 
 # Sales Rank Thresholds for Underserved Detection

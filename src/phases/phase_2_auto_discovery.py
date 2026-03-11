@@ -251,16 +251,10 @@ def main():
         # Category search
         stats = engine.run_with_categories(args.categories, max_products=args.max)
     else:
-        # Default: Music/instruments (based on your product)
-        logger.info("No keywords/categories provided. Using default: music instruments")
-        default_keywords = [
-            'violin accessories',
-            'guitar accessories',
-            'music instrument care',
-            'violin rosin',
-            'instrument strings'
-        ]
-        stats = engine.run_with_keywords(default_keywords, max_products=args.max)
+        # Default: multi-category discovery to validate across diverse products
+        logger.info("No keywords/categories provided. Using default multi-category discovery")
+        default_categories = ['electronics', 'home', 'beauty', 'music', 'health']
+        stats = engine.run_with_categories(default_categories, max_products=args.max)
 
     # Summary
     if stats['opportunities'] > 0:
