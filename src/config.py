@@ -219,6 +219,37 @@ AMAZON_FBA_FEES = {
 # Default FBA fee when product weight/dimensions are unknown
 AMAZON_FBA_FEE_DEFAULT = Decimal("3.07")  # Large standard (most common)
 
+# Wholesale-to-Retail Cost Ratios by Category
+# Estimated wholesale cost = Amazon price × ratio
+# Based on typical B2B margins: manufacturers sell at 25-40% of retail
+WHOLESALE_COST_RATIOS = {
+    "Electronics": 0.35,
+    "Computers & Accessories": 0.40,
+    "Home & Kitchen": 0.30,
+    "Home": 0.30,
+    "Musical Instruments & DJ": 0.30,
+    "Musical Instruments": 0.30,
+    "Sports & Outdoors": 0.30,
+    "Beauty": 0.25,
+    "Toys & Games": 0.28,
+    "Pet Supplies": 0.30,
+    "Office Products": 0.32,
+    "Automotive": 0.35,
+    "Health & Personal Care": 0.25,
+    "Books": 0.45,
+    "default": 0.30,
+}
+
+# Estimated shipping cost per unit (GBP) for B2B wholesale
+# Varies by source region and weight class
+ESTIMATED_SHIPPING_COSTS = {
+    "china_standard": Decimal("1.50"),    # Alibaba, Made-in-China
+    "china_express": Decimal("3.00"),     # Express from China
+    "uk_domestic": Decimal("0.80"),       # UK wholesaler
+    "eu_standard": Decimal("1.20"),       # EU supplier
+    "default": Decimal("1.50"),
+}
+
 # Category-Specific Sales Estimation Curves
 # Uses power-law approximation: estimated_monthly_sales = multiplier * (rank ** exponent)
 # Based on publicly available research for UK marketplace

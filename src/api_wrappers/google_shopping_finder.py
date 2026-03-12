@@ -677,14 +677,21 @@ class GoogleShoppingFinder:
                     logger.info(f"  ✗ FILTERED (not a manufacturer platform): {url[:80]}")
                     return None
 
+            # Extract pricing from snippet
+            price_data = self._extract_price_from_snippet(snippet, title)
+
             supplier = {
                 'platform': platform,
                 'name': item.get('title', 'Unknown Supplier'),
                 'url': url,
                 'description': item.get('snippet', ''),
                 'source': 'Google Custom Search',
-                'supplier_type': self._classify_supplier_type(platform)
+                'supplier_type': self._classify_supplier_type(platform),
+                'price_data': price_data,
             }
+
+            if price_data:
+                logger.info(f"    Price extracted: ${price_data['min_price']:.2f}-${price_data['max_price']:.2f}")
 
             return supplier
 
@@ -705,6 +712,68 @@ class GoogleShoppingFinder:
         # Only real B2B manufacturer platforms are accepted
         # All accepted platforms are manufacturers
         return 'manufacturer'
+
+    def _extract_price_from_snippet(self, snippet: str, title: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract supplier pricing from Google search snippet/title.
+
+        Alibaba and other B2B platforms often show prices like:
+        - "$1.50 - $3.00/piece"
+        - "US $0.50-$2.00"
+        - "£1.20 / Piece"
+        - "MOQ: 100 pieces"
+
+        Returns:
+            Dict with min_price, max_price, currency, moq — or None
+        """
+        text = f"{title} {snippet}"
+
+        result = {}
+
+        # Pattern 1: Price range "$1.50 - $3.00" or "US $0.50-$2.00"
+        range_pattern = r'(?:US\s*)?\$\s*(\d+(?:\.\d{1,2})?)\s*[-–]\s*(?:US\s*)?\$?\s*(\d+(?:\.\d{1,2})?)'
+        match = re.search(range_pattern, text)
+        if match:
+            result['min_price'] = float(match.group(1))
+            result['max_price'] = float(match.group(2))
+            result['currency'] = 'USD'
+
+        # Pattern 2: Single price "$1.50/piece" or "$2.00 / Piece"
+        if not result:
+            single_pattern = r'(?:US\s*)?\$\s*(\d+(?:\.\d{1,2})?)\s*(?:/\s*(?:piece|pcs?|unit|item))?'
+            match = re.search(single_pattern, text, re.IGNORECASE)
+            if match:
+                price = float(match.group(1))
+                if 0.01 < price < 500:  # Sanity check
+                    result['min_price'] = price
+                    result['max_price'] = price
+                    result['currency'] = 'USD'
+
+        # Pattern 3: GBP prices "£1.20"
+        if not result:
+            gbp_pattern = r'£\s*(\d+(?:\.\d{1,2})?)\s*[-–]?\s*(?:£?\s*(\d+(?:\.\d{1,2})?))?'
+            match = re.search(gbp_pattern, text)
+            if match:
+                result['min_price'] = float(match.group(1))
+                result['max_price'] = float(match.group(2)) if match.group(2) else float(match.group(1))
+                result['currency'] = 'GBP'
+
+        # Extract MOQ if present
+        moq_pattern = r'(?:MOQ|Min(?:imum)?\s*(?:Order)?)\s*[:\s]*(\d+)\s*(?:pieces?|pcs?|units?|items?)?'
+        moq_match = re.search(moq_pattern, text, re.IGNORECASE)
+        if moq_match:
+            result['moq'] = int(moq_match.group(1))
+
+        # Also try "X Pieces (min" pattern for MOQ
+        if 'moq' not in result:
+            pieces_pattern = r'(\d+)\s*(?:pieces?|pcs)\s*\(?\s*(?:min|minimum)'
+            moq_match = re.search(pieces_pattern, text, re.IGNORECASE)
+            if moq_match:
+                result['moq'] = int(moq_match.group(1))
+
+        if result and 'min_price' in result:
+            return result
+        return None
 
     def estimate_cost(self, num_searches: int) -> float:
         """
