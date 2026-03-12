@@ -5,7 +5,6 @@ Shared test fixtures for the Amazon Replens Automation test suite.
 import os
 import pytest
 from decimal import Decimal
-from datetime import datetime
 
 # Use in-memory SQLite for tests
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"

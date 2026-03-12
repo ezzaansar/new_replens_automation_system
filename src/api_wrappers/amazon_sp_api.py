@@ -15,7 +15,6 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from decimal import Decimal
 import requests
-from requests.auth import HTTPBasicAuth
 
 from src.config import settings, AMAZON_SP_API_ENDPOINTS
 

@@ -208,10 +208,15 @@ class GoogleSupplierMatchingEngine:
                     'source': 'extracted',
                     'moq': price_data.get('moq'),
                 }
+            else:
+                logger.info(f"  Extracted price £{unit_cost_gbp:.2f} rejected "
+                            f"(≥60% of Amazon price £{amazon_price:.2f}), "
+                            f"falling back to category ratio")
 
         # Method 2: Category-based wholesale estimation
+        # Try exact match first, then title-case, then default
         ratio = WHOLESALE_COST_RATIOS.get(category,
-                WHOLESALE_COST_RATIOS.get(cat_lower,
+                WHOLESALE_COST_RATIOS.get(category.title(),
                 WHOLESALE_COST_RATIOS['default']))
 
         estimated_cost = round(amazon_price * ratio, 2)
