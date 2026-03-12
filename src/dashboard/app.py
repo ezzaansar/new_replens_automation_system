@@ -22,7 +22,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.database import SessionLocal, Product, Supplier, ProductSupplier
+from src.database import SessionLocal, Product, Supplier, ProductSupplier, Inventory, PurchaseOrder
 from src.api_wrappers.seller_metrics import SellerMetrics
 from src.api_wrappers.supplier_metrics import SupplierMetrics
 from src.config import settings
@@ -436,44 +436,107 @@ elif page == "🎯 Opportunities":
 # ============================================================================
 
 elif page == "📊 Inventory":
-    st.title("📊 Inventory")
-    st.markdown("**Stock levels and reorder alerts**")
+    st.title("📊 Inventory & Forecasting")
+    st.markdown("**Stock levels, demand forecasts, and reorder alerts**")
     st.markdown("---")
 
-    # Summary metrics
-    col1, col2, col3 = st.columns(3)
+    # Load inventory and forecast data from DB
+    session_inv = SessionLocal()
+    try:
+        inv_records = session_inv.query(Inventory).all()
+        reorder_records = session_inv.query(Inventory).filter(Inventory.needs_reorder == True).all()
+        po_pending = session_inv.query(PurchaseOrder).filter(
+            PurchaseOrder.status.in_(["pending", "confirmed", "shipped"])
+        ).all()
 
-    with col1:
-        st.metric("Total SKUs", inventory_data.get('total_products', 0))
+        total_skus = len(inv_records)
+        total_units = sum(i.current_stock or 0 for i in inv_records)
+        need_reorder = len(reorder_records)
 
-    with col2:
-        st.metric("Total Units", inventory_data.get('total_units', 0))
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Tracked SKUs", total_skus)
+        with col2:
+            st.metric("Total Units", total_units)
+        with col3:
+            st.metric("Need Reorder", need_reorder, delta=f"of {total_skus}" if total_skus > 0 else None)
+        with col4:
+            st.metric("Pending POs", len(po_pending))
 
-    with col3:
-        fba = inventory_data.get('fba_units', 0)
-        st.metric("FBA Units", fba)
+        st.markdown("---")
 
-    st.markdown("---")
-
-    # Inventory table
-    st.subheader("Current Inventory")
-    if inventory_data.get('inventory_items'):
-        df_inventory = pd.DataFrame(inventory_data['inventory_items'])
-        st.dataframe(df_inventory, use_container_width=True, height=500)
-    else:
-        if 'error' in inventory_data:
-            st.error(f"Failed to fetch inventory from Amazon SP-API: {inventory_data.get('error')}")
-            if 'error_details' in inventory_data:
-                with st.expander("Show error details"):
-                    st.code(inventory_data.get('error_details'))
+        # Reorder alerts
+        if reorder_records:
+            st.subheader("Reorder Alerts")
+            reorder_data = []
+            for inv in reorder_records:
+                product = session_inv.query(Product).filter(Product.asin == inv.asin).first()
+                reorder_data.append({
+                    'ASIN': inv.asin,
+                    'Title': (product.title or '')[:50] if product else '',
+                    'Stock': inv.current_stock or 0,
+                    'Reorder Point': inv.reorder_point or 0,
+                    'Safety Stock': inv.safety_stock or 0,
+                    'Days of Supply': inv.days_of_supply or 0,
+                    'Forecast 30d': inv.forecasted_stock_30d or 0,
+                })
+            df_reorder = pd.DataFrame(reorder_data)
+            st.dataframe(df_reorder, use_container_width=True, height=400)
         else:
-            st.info("No inventory data available. This may be normal if you have no active listings with stock.")
+            st.success("All products are adequately stocked!")
 
-    st.markdown("---")
+        st.markdown("---")
 
-    # Reorder alerts (placeholder for Phase 5)
-    st.subheader("⚠️ Reorder Alerts")
-    st.info("Reorder alerts will be available after implementing Phase 5 (Inventory Forecasting)")
+        # Full inventory table with forecasts
+        st.subheader("Inventory & Forecasts")
+        if inv_records:
+            inv_data = []
+            for inv in inv_records:
+                product = session_inv.query(Product).filter(Product.asin == inv.asin).first()
+                inv_data.append({
+                    'ASIN': inv.asin,
+                    'Title': (product.title or '')[:40] if product else '',
+                    'Stock': inv.current_stock or 0,
+                    'Available': inv.available or 0,
+                    'Reorder Pt': inv.reorder_point or 0,
+                    'Safety': inv.safety_stock or 0,
+                    'DoS': f"{inv.days_of_supply:.0f}d" if inv.days_of_supply and inv.days_of_supply < 999 else '-',
+                    '30d Forecast': inv.forecasted_stock_30d if inv.forecasted_stock_30d is not None else '-',
+                    '60d Forecast': inv.forecasted_stock_60d if inv.forecasted_stock_60d is not None else '-',
+                    'Reorder?': 'Yes' if inv.needs_reorder else 'No',
+                })
+            df_inv = pd.DataFrame(inv_data)
+            st.dataframe(df_inv, use_container_width=True, height=500)
+        else:
+            st.info("No inventory data. Run Phase 5 forecasting first.")
+
+        st.markdown("---")
+
+        # Purchase Orders
+        st.subheader("Purchase Orders")
+        all_pos = session_inv.query(PurchaseOrder).order_by(PurchaseOrder.order_date.desc()).limit(50).all()
+        if all_pos:
+            po_data = []
+            for po in all_pos:
+                supplier = session_inv.query(Supplier).filter(Supplier.supplier_id == po.supplier_id).first()
+                po_data.append({
+                    'PO ID': po.po_id,
+                    'ASIN': po.asin,
+                    'Supplier': (supplier.name or '')[:30] if supplier else '',
+                    'Qty': po.quantity,
+                    'Unit Cost': f"£{po.unit_cost:.2f}" if po.unit_cost else '-',
+                    'Total': f"£{po.total_cost:.2f}" if po.total_cost else '-',
+                    'Status': po.status,
+                    'ETA': po.expected_delivery.strftime('%Y-%m-%d') if po.expected_delivery else '-',
+                })
+            df_po = pd.DataFrame(po_data)
+            st.dataframe(df_po, use_container_width=True)
+        else:
+            st.info("No purchase orders yet. Run Phase 5 with --auto-po or create POs manually.")
+
+    finally:
+        session_inv.close()
 
 # ============================================================================
 # PAGE 5: PERFORMANCE
