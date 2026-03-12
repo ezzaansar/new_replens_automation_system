@@ -5,9 +5,12 @@ Uses Google Custom Search API to find suppliers for products.
 Searches supplier platforms like Alibaba, Global Sources, etc.
 """
 
+import json
 import logging
+import os
 import requests
 import re
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote_plus, urlparse
 
@@ -41,6 +44,59 @@ class GoogleShoppingFinder:
         self.base_url = "https://www.googleapis.com/customsearch/v1"
 
         logger.info("✓ Google Shopping finder initialized")
+
+    # ========================================================================
+    # QUOTA TRACKING
+    # ========================================================================
+
+    def _get_quota_file(self) -> str:
+        """Path to quota tracking file."""
+        return os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            'data', 'google_api_quota.json'
+        )
+
+    def _load_quota(self) -> Dict[str, Any]:
+        """Load today's quota usage. Resets daily."""
+        quota_file = self._get_quota_file()
+        today = datetime.now().strftime('%Y-%m-%d')
+        try:
+            with open(quota_file, 'r') as f:
+                data = json.load(f)
+            if data.get('date') != today:
+                return {'date': today, 'queries_used': 0, 'limit': 100}
+            return data
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {'date': today, 'queries_used': 0, 'limit': 100}
+
+    def _save_quota(self, quota: Dict[str, Any]):
+        """Save quota usage to file."""
+        quota_file = self._get_quota_file()
+        os.makedirs(os.path.dirname(quota_file), exist_ok=True)
+        with open(quota_file, 'w') as f:
+            json.dump(quota, f)
+
+    def _check_quota(self) -> bool:
+        """Check if we have quota remaining. Returns True if OK."""
+        quota = self._load_quota()
+        remaining = quota['limit'] - quota['queries_used']
+        if remaining <= 0:
+            logger.warning(f"Google API daily quota exhausted ({quota['queries_used']}/{quota['limit']})")
+            return False
+        if remaining <= 10:
+            logger.warning(f"Google API quota low: {remaining} queries remaining today")
+        return True
+
+    def _record_query(self):
+        """Record a query against today's quota."""
+        quota = self._load_quota()
+        quota['queries_used'] += 1
+        self._save_quota(quota)
+        logger.debug(f"Google API quota: {quota['queries_used']}/{quota['limit']}")
+
+    # ========================================================================
+    # BRAND DETECTION
+    # ========================================================================
 
     def _is_likely_brand_name(self, word: str) -> bool:
         """
@@ -301,6 +357,10 @@ class GoogleShoppingFinder:
             Dictionary with supplier results
         """
         try:
+            # Check quota before making request
+            if not self._check_quota():
+                return {'suppliers': [], 'error': 'quota_exhausted', 'quota_exceeded': True}
+
             # Simplify the product title for better search results
             simplified_title = self._simplify_product_title(product_title)
 
@@ -308,7 +368,6 @@ class GoogleShoppingFinder:
             product_keywords = self._extract_product_keywords(product_title)
 
             # Build search query targeting B2B manufacturer platforms that ship to UK
-            # Focus on real platforms: Alibaba, Global Sources, Made-in-China, DHgate, TradeKey, IndiaMart
             query = f"{simplified_title} site:alibaba.com OR site:globalsources.com OR site:made-in-china.com"
 
             logger.info(f"Simplified: '{product_title[:60]}...' → '{simplified_title}'")
@@ -325,6 +384,7 @@ class GoogleShoppingFinder:
 
             response = requests.get(self.base_url, params=params, timeout=10)
             response.raise_for_status()
+            self._record_query()
             data = response.json()
 
             # Parse results with relevance checking

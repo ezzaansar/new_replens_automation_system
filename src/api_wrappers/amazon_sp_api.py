@@ -323,7 +323,12 @@ class AmazonSPAPI:
     
     def update_price(self, sku: str, price: float, currency: str = 'GBP') -> bool:
         """
-        Update the price for a product.
+        Update the price for a product via SP-API Feeds.
+
+        Steps:
+        1. Create a feed document (get pre-signed upload URL)
+        2. Upload pricing XML to the URL
+        3. Submit the feed for processing
 
         Args:
             sku: Your product SKU
@@ -331,21 +336,9 @@ class AmazonSPAPI:
             currency: Currency code (default: GBP)
 
         Returns:
-            True if successful
+            True if feed was submitted successfully
         """
-        endpoint = "/products/pricing/v2/feedDocuments"
-        
-        # Create feed document
-        feed_data = {
-            "feedType": "POST_PRODUCT_PRICING_DATA",
-            "marketplaceIds": ["A1F83G8C2ARO7P"],  # UK marketplace
-            "inputFeedDocumentId": None,
-            "feedOptions": {},
-            "documentSpecVersion": "2.0",
-        }
-        
-        # Create pricing feed
-        pricing_data = f"""<?xml version="1.0" encoding="UTF-8"?>
+        pricing_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <AmazonEnvelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="amzn-envelope.xsd">
     <Header>
         <DocumentVersion>1.01</DocumentVersion>
@@ -357,23 +350,74 @@ class AmazonSPAPI:
         <OperationType>Update</OperationType>
         <Price>
             <SKU>{sku}</SKU>
-            <StandardPrice currency="{currency}">{price}</StandardPrice>
+            <StandardPrice currency="{currency}">{price:.2f}</StandardPrice>
         </Price>
     </Message>
 </AmazonEnvelope>"""
-        
+
         try:
-            # This is a simplified example. Full implementation would involve:
-            # 1. Creating a feed document
-            # 2. Uploading the feed content
-            # 3. Submitting the feed
-            currency_symbol = '£' if currency == 'GBP' else '$'
-            logger.info(f"✓ Price updated for {sku}: {currency_symbol}{price}")
-            return True
+            # Step 1: Create feed document to get upload URL
+            doc_endpoint = "/feeds/2021-06-30/documents"
+            doc_payload = {"contentType": "text/xml; charset=UTF-8"}
+            doc_response = self._make_request("POST", doc_endpoint, json=doc_payload)
+            feed_document_id = doc_response.get("feedDocumentId")
+            upload_url = doc_response.get("url")
+
+            if not feed_document_id or not upload_url:
+                logger.error(f"Failed to create feed document for {sku}")
+                return False
+
+            logger.info(f"  Feed document created: {feed_document_id}")
+
+            # Step 2: Upload pricing XML to the pre-signed URL
+            upload_response = requests.put(
+                upload_url,
+                data=pricing_xml.encode("utf-8"),
+                headers={"Content-Type": "text/xml; charset=UTF-8"},
+                timeout=settings.api_timeout,
+            )
+            upload_response.raise_for_status()
+            logger.info(f"  Pricing XML uploaded for {sku}")
+
+            # Step 3: Submit the feed for processing
+            feed_endpoint = "/feeds/2021-06-30/feeds"
+            feed_payload = {
+                "feedType": "POST_PRODUCT_PRICING_DATA",
+                "marketplaceIds": ["A1F83G8C2ARO7P"],
+                "inputFeedDocumentId": feed_document_id,
+            }
+            feed_response = self._make_request("POST", feed_endpoint, json=feed_payload)
+            feed_id = feed_response.get("feedId")
+
+            if feed_id:
+                currency_symbol = '£' if currency == 'GBP' else '$'
+                logger.info(f"  Price feed submitted for {sku}: {currency_symbol}{price:.2f} (feedId={feed_id})")
+                return True
+            else:
+                logger.error(f"  Feed submission failed for {sku}: no feedId returned")
+                return False
+
         except Exception as e:
-            logger.error(f"✗ Failed to update price for {sku}: {e}")
+            logger.error(f"Failed to update price for {sku}: {e}")
             return False
-    
+
+    def get_feed_status(self, feed_id: str) -> Dict[str, Any]:
+        """
+        Check the processing status of a submitted feed.
+
+        Args:
+            feed_id: Feed ID from submit response
+
+        Returns:
+            Feed processing status with processingStatus field
+        """
+        endpoint = f"/feeds/2021-06-30/feeds/{feed_id}"
+        try:
+            return self._make_request("GET", endpoint)
+        except Exception as e:
+            logger.error(f"Failed to get feed status for {feed_id}: {e}")
+            return {"processingStatus": "UNKNOWN", "error": str(e)}
+
     # ========================================================================
     # ORDERS
     # ========================================================================

@@ -41,22 +41,10 @@ class Settings(BaseSettings):
     keepa_domain: str = "US"  # Country code: US, GB, DE, FR, JP, CA, IT, ES, IN, MX
     
     # ========================================================================
-    # OPENAI API CONFIGURATION (Optional)
-    # ========================================================================
-    openai_api_key: Optional[str] = None
-    openai_model: str = "gpt-4"
-
-    # ========================================================================
     # GOOGLE APIS CONFIGURATION (Optional)
     # ========================================================================
     google_api_key: Optional[str] = None
     google_search_engine_id: Optional[str] = None  # Custom Search Engine ID (cx)
-
-    # ========================================================================
-    # REPRICING TOOL INTEGRATION (Optional)
-    # ========================================================================
-    eva_guru_api_key: Optional[str] = None
-    bqool_api_key: Optional[str] = None
     
     # ========================================================================
     # NOTIFICATION CONFIGURATION
@@ -297,10 +285,9 @@ PRICE_STABILITY_THRESHOLDS = {
 
 # Forecast Models
 FORECAST_MODELS = {
-    "prophet": "Facebook Prophet (time series)",
-    "xgboost": "XGBoost (gradient boosting)",
-    "arima": "ARIMA (autoregressive)",
-    "exponential_smoothing": "Exponential Smoothing",
+    "ses": "Simple Exponential Smoothing",
+    "holts": "Holt's Double Exponential Smoothing",
+    "wma": "Weighted Moving Average",
 }
 
 # API Endpoints

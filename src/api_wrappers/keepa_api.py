@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional
 
 import keepa
 from src.config import settings
+from src.utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class KeepaAPI:
             logger.error(f"✗ Failed to initialize Keepa API: {e}")
             raise
 
+    @retry_with_backoff(max_retries=3, base_delay=2.0, backoff_factor=2.0)
     def get_product_data(self, asins: List[str]) -> List[Dict[str, Any]]:
         """
         Get detailed product data for a list of ASINs.
@@ -58,12 +60,15 @@ class KeepaAPI:
             products = self.api.query(asins, domain=self.domain)
             return products
         except Exception as e:
-            logger.error(f"✗ Failed to get product data from Keepa: {e}")
-            return []
+            logger.error(f"Failed to get product data from Keepa: {e}")
+            raise
 
     def search_for_products(self, search_term: str, category: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Search for products on Keepa.
+        Search for products on Keepa using best-seller queries.
+
+        Note: Keepa library doesn't support keyword search directly.
+        Uses best_sellers_query as an alternative when category is provided.
 
         Args:
             search_term: The search term to use.
@@ -76,13 +81,15 @@ class KeepaAPI:
             return []
 
         try:
-            # This is a simplified example. The keepa library does not directly support
-            # keyword searches. A more advanced implementation would use other methods
-            # to find ASINs first, then query Keepa.
-            logger.warning("Keepa keyword search is not directly supported. This is a placeholder.")
+            if category:
+                # Use Keepa's best sellers query as alternative to keyword search
+                asins = self.api.best_sellers_query(domain=self.domain, category=category)
+                if asins:
+                    return self.get_product_data(asins[:20])
+            logger.info(f"Keepa keyword search not available — use SP-API catalog search instead")
             return []
         except Exception as e:
-            logger.error(f"✗ Failed to search for products on Keepa: {e}")
+            logger.error(f"Failed to search for products on Keepa: {e}")
             return []
 
 
