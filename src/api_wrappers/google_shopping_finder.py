@@ -89,9 +89,8 @@ for domain, name in B2B_MANUFACTURER_PLATFORMS.items():
 class RateLimiter:
     """Thread-safe rate limiter for API calls."""
 
-    def __init__(self, max_calls_per_second: float = 1.0, max_calls_per_day: int = 100):
+    def __init__(self, max_calls_per_second: float = 1.0):
         self.min_interval = 1.0 / max_calls_per_second
-        self.max_daily = max_calls_per_day
         self._lock = threading.Lock()
         self._last_call_time = 0.0
 
@@ -131,10 +130,9 @@ class GoogleShoppingFinder:
         self.cx = settings.google_search_engine_id
         self.base_url = "https://www.googleapis.com/customsearch/v1"
 
-        # Rate limiter: 1 request/second, 100/day (free tier)
+        # Rate limiter: uses google_rate_limit from settings (default 1 req/s)
         self._rate_limiter = RateLimiter(
-            max_calls_per_second=1.0,
-            max_calls_per_day=100,
+            max_calls_per_second=settings.google_rate_limit,
         )
 
         logger.info("✓ Google Shopping finder initialized (with rate limiting)")
