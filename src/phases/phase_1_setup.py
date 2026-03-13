@@ -18,16 +18,7 @@ from src.config import settings, validate_settings
 from src.api_wrappers.amazon_sp_api import get_sp_api
 from src.api_wrappers.keepa_api import get_keepa_api
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(settings.log_file),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-
+# Use the logger configured by main.py (with UTF-8 encoding for Windows)
 logger = logging.getLogger(__name__)
 
 
@@ -87,26 +78,17 @@ def validate_configuration():
         return False
 
 
-def create_sample_data():
-    """Create sample data for testing (optional)."""
+def verify_database():
+    """Verify that the database is accessible and tables exist."""
     try:
         session = SessionLocal()
-        
-        # Check if we already have sample data
+
         from src.database import Product
         products = session.query(Product).count()
-        if products > 0:
-            logger.info("Sample data already exists, skipping creation")
-            return True
-        
-        logger.info("Creating sample data...")
-        
-        # This would be populated with actual test data
-        # For now, just log that we're ready
-        logger.info("✓ Sample data creation complete")
+        logger.info(f"✓ Database verified ({products} products in DB)")
         return True
     except Exception as e:
-        logger.error(f"✗ Sample data creation failed: {e}")
+        logger.error(f"✗ Database verification failed: {e}")
         return False
     finally:
         session.close()
@@ -161,9 +143,9 @@ def main():
     logger.info("\n[5/6] Testing Keepa API connection...")
     keepa_api_ok = test_keepa_api()
     
-    # Step 6: Create sample data (optional)
-    logger.info("\n[6/6] Creating sample data...")
-    create_sample_data()
+    # Step 6: Verify database access
+    logger.info("\n[6/6] Verifying database...")
+    verify_database()
     
     # Print status
     logger.info("\n" + "=" * 70)

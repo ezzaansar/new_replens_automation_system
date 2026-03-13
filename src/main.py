@@ -18,6 +18,24 @@ Usage:
 import argparse
 import logging
 import sys
+import os
+from pathlib import Path
+
+# Ensure logs directory exists before any module-level logging imports
+_log_dir = Path(os.getenv("LOG_FILE", "logs/replens_automation.log")).parent
+_log_dir.mkdir(parents=True, exist_ok=True)
+
+# Configure logging with UTF-8 encoding (Windows cp1252 can't handle Unicode symbols)
+_stream_handler = logging.StreamHandler(sys.stdout)
+_stream_handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', closefd=False)
+_file_handler = logging.FileHandler(
+    os.getenv("LOG_FILE", "logs/replens_automation.log"), encoding='utf-8'
+)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[_file_handler, _stream_handler],
+)
 
 from src.phases import (
     phase_1_setup,
@@ -26,8 +44,8 @@ from src.phases import (
     phase_4_repricing,
     phase_5_forecasting,
 )
+from src.database import init_db, Base, engine
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -118,6 +136,13 @@ def main():
 
     logger.info("Starting Amazon Replens Automation System")
     logger.info(f"Running phases: {sorted(phases_to_run)}")
+
+    # Always ensure database tables exist (safe no-op if they already do)
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if not inspector.get_table_names():
+        logger.info("Database tables missing — initializing...")
+        init_db()
 
     phase_runners = {
         1: run_phase_1,

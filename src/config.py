@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     price_adjustment_amount: Decimal = Decimal("0.01")
     max_price_multiplier: float = 1.5  # Maximum price = cost × 1.5
     min_price_change_percent: float = 0.01  # Only reprice if change > 1%
+    usd_to_gbp_rate: float = 0.79  # USD→GBP exchange rate (update regularly)
     
     # Inventory Configuration
     inventory_turnover_target: int = 4  # 4x per month

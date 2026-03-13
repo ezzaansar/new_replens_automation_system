@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from sqlalchemy.pool import StaticPool
+import logging
 import os
 from dotenv import load_dotenv
 
@@ -185,12 +186,15 @@ class ProductSupplier(Base):
     supplier_cost = Column(Numeric(10, 2))  # Cost per unit from supplier
     shipping_cost = Column(Numeric(10, 2), default=0)  # Shipping per unit
     total_cost = Column(Numeric(10, 2))  # Total landed cost
-    
+
+    # Cost data provenance: 'extracted' (from supplier listing), 'estimated' (category ratio), 'manual', 'none'
+    cost_source = Column(String(20), default="none")
+
     # Profitability
     estimated_profit = Column(Numeric(10, 2))
     profit_margin = Column(Float)  # 0-1 (e.g., 0.25 = 25%)
     roi = Column(Float)  # Return on investment
-    
+
     # Status
     is_preferred = Column(Boolean, default=False)
     status = Column(String(20), default="active")
@@ -336,15 +340,18 @@ class Performance(Base):
     cost_of_goods = Column(Numeric(10, 2), default=0)
     amazon_fees = Column(Numeric(10, 2), default=0)
     net_profit = Column(Numeric(10, 2), default=0)
-    
+
     # Buy Box Metrics
     buy_box_owned = Column(Boolean, default=False)
     buy_box_percentage = Column(Float, default=0.0)  # 0-1
-    
+
     # Pricing & Competition
     price = Column(Numeric(10, 2), nullable=True)
     competitor_price = Column(Numeric(10, 2), nullable=True)
     sales_rank = Column(Integer, nullable=True)
+
+    # Data provenance: 'discovery_snapshot', 'repricing', 'sales_import', 'manual'
+    data_source = Column(String(30), default="discovery_snapshot")
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -364,7 +371,7 @@ class Performance(Base):
 def init_db():
     """Create all tables in the database."""
     Base.metadata.create_all(bind=engine)
-    print("✓ Database initialized successfully")
+    logging.getLogger(__name__).info("[OK] Database initialized successfully")
 
 
 def get_db() -> Session:

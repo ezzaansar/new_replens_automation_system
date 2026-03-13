@@ -2,7 +2,15 @@
 Phase 3: Supplier Matching with Google Shopping API
 
 Finds suppliers using Google Custom Search API.
-Searches B2B platforms like Alibaba, Global Sources, Made-in-China, etc.
+Prioritises UK domestic wholesalers and authorized distributors for the
+Replens model (branded, replenishable products with established demand).
+
+Search priority:
+  1. UK FMCG wholesalers (Booker, Costco, DCS Group, Bestway, Hancocks)
+  2. UK general merchandise wholesalers (Harrisons, Pound Wholesale, PetBrands)
+  3. UK wholesale directories (eSources, The Wholesaler)
+  4. UK retail/OA sources (Boots, Superdrug, Argos, Smyths, B&M)
+  5. B2B manufacturer platforms (Alibaba, etc.) — lowest priority fallback
 """
 
 import logging
@@ -196,10 +204,10 @@ class GoogleSupplierMatchingEngine:
             max_p = price_data.get('max_price', min_p)
             unit_cost_usd = (min_p + max_p) / 2
 
-            # Convert USD to GBP (approximate rate)
+            # Convert USD to GBP using configurable rate from settings
             currency = price_data.get('currency', 'USD')
             if currency == 'USD':
-                unit_cost_gbp = unit_cost_usd * 0.79  # USD → GBP
+                unit_cost_gbp = unit_cost_usd * settings.usd_to_gbp_rate
             else:
                 unit_cost_gbp = unit_cost_usd  # Already GBP
 
@@ -315,6 +323,7 @@ class GoogleSupplierMatchingEngine:
                         existing.supplier_cost = cost_data['supplier_cost']
                         existing.shipping_cost = cost_data['shipping_cost']
                         existing.total_cost = cost_data['total_cost']
+                        existing.cost_source = cost_data['source']
                         existing.estimated_profit = prof['estimated_profit']
                         existing.profit_margin = prof['profit_margin']
                         existing.roi = prof['roi']
@@ -339,6 +348,7 @@ class GoogleSupplierMatchingEngine:
                 supplier_cost=cost_data['supplier_cost'],
                 shipping_cost=cost_data['shipping_cost'],
                 total_cost=cost_data['total_cost'],
+                cost_source=cost_data['source'],
                 estimated_profit=prof['estimated_profit'],
                 profit_margin=prof['profit_margin'],
                 roi=prof['roi'],
@@ -364,8 +374,13 @@ class GoogleSupplierMatchingEngine:
         return matches
 
     def _get_demo_suppliers(self) -> Dict[str, Any]:
-        """Fallback suppliers when Google API is unavailable."""
-        logger.warning("Google API not configured — using fallback supplier platforms.")
+        """Fallback UK wholesalers when Google API is unavailable.
+
+        Replens model prioritises domestic wholesalers and authorized
+        distributors for branded, replenishable products — not overseas
+        manufacturer platforms like Alibaba.
+        """
+        logger.warning("Google API not configured — using fallback UK wholesaler platforms.")
         logger.warning("Configure GOOGLE_API_KEY and GOOGLE_SEARCH_ENGINE_ID in .env for real supplier discovery.")
         logger.info("Using category-based cost estimation for profitability calculations.")
         return {
@@ -376,7 +391,7 @@ class GoogleSupplierMatchingEngine:
                     'url': 'https://www.booker.co.uk',
                     'supplier_type': 'uk_wholesaler',
                     'price_data': None,
-                    'description': 'UK cash & carry. Costs auto-estimated from category ratios.'
+                    'description': 'UK cash & carry — grocery, FMCG, household brands.'
                 },
                 {
                     'platform': 'DCS Group',
@@ -384,15 +399,39 @@ class GoogleSupplierMatchingEngine:
                     'url': 'https://www.dcsgroup.com',
                     'supplier_type': 'uk_wholesaler',
                     'price_data': None,
-                    'description': 'UK health, beauty & household distributor. Costs auto-estimated.'
+                    'description': 'UK largest health, beauty & household distributor.'
                 },
                 {
-                    'platform': 'Alibaba',
-                    'name': 'Alibaba Wholesale Marketplace',
-                    'url': 'https://www.alibaba.com',
-                    'supplier_type': 'manufacturer',
+                    'platform': 'Bestway Wholesale',
+                    'name': 'Bestway Wholesale (UK)',
+                    'url': 'https://www.bestwaywholesale.co.uk',
+                    'supplier_type': 'uk_wholesaler',
                     'price_data': None,
-                    'description': 'B2B wholesale marketplace. Costs auto-estimated from category ratios.'
+                    'description': 'UK cash & carry — grocery, drinks, household, health & beauty.'
+                },
+                {
+                    'platform': 'Costco UK',
+                    'name': 'Costco UK',
+                    'url': 'https://www.costco.co.uk',
+                    'supplier_type': 'uk_wholesaler',
+                    'price_data': None,
+                    'description': 'Bulk buys — branded grocery, health, beauty, household, electronics.'
+                },
+                {
+                    'platform': 'Harrisons Direct',
+                    'name': 'Harrisons Direct (UK)',
+                    'url': 'https://www.harrisonsdirect.co.uk',
+                    'supplier_type': 'uk_wholesaler',
+                    'price_data': None,
+                    'description': 'UK wholesaler — health, beauty, toys, stationery, pet.'
+                },
+                {
+                    'platform': 'Boots',
+                    'name': 'Boots (UK Retail/OA)',
+                    'url': 'https://www.boots.com',
+                    'supplier_type': 'uk_retail',
+                    'price_data': None,
+                    'description': 'UK retail — health & beauty replens via Advantage Card offers.'
                 },
             ]
         }
@@ -441,6 +480,7 @@ class GoogleSupplierMatchingEngine:
                 ps.supplier_cost = cost_data['supplier_cost']
                 ps.shipping_cost = cost_data['shipping_cost']
                 ps.total_cost = cost_data['total_cost']
+                ps.cost_source = cost_data['source']
                 ps.estimated_profit = prof['estimated_profit']
                 ps.profit_margin = prof['profit_margin']
                 ps.roi = prof['roi']
@@ -469,8 +509,15 @@ class GoogleSupplierMatchingEngine:
         if backfilled:
             logger.info(f"Backfilled {backfilled} existing links with cost estimates")
 
-        # Get products
+        # Get underserved products first; fall back to all active products
+        # so sourcing still runs even before underserved classification is refined
         products = self.db.get_underserved_products(self.session, limit=limit)
+        if not products:
+            logger.warning("No underserved products found — falling back to all active products")
+            products = self.session.query(Product).filter(
+                Product.status == 'active',
+                Product.current_price > 0,
+            ).order_by(Product.opportunity_score.desc()).limit(limit).all()
         logger.info(f"Found {len(products)} products to analyze")
 
         total_matches = 0

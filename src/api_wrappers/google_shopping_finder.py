@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 
 # All sites configured in the Google Programmable Search Engine (cx)
 # Organised by category for platform detection
+#
+# REPLENS MODEL STRATEGY:
+# The Replens (Replenishable) model focuses on fast-moving, branded,
+# consumable, and everyday products with established demand on Amazon.
+# This requires DOMESTIC wholesalers, authorized distributors, and
+# cash-and-carries — NOT unbranded goods from overseas manufacturers.
+#
+# Priority order:
+#   1. UK FMCG wholesalers (branded grocery, health, beauty, household)
+#   2. UK general merchandise wholesalers (toys, stationery, pet, homeware)
+#   3. UK wholesale directories (find niche brand distributors)
+#   4. UK retail/OA sources (clearance, 3-for-2, loyalty point arbitrage)
+#   5. B2B manufacturer platforms (LOWEST priority — mainly for private label)
 
 UK_FMCG_WHOLESALERS = {
     'dcsgroup.com': 'DCS Group',
@@ -63,6 +76,9 @@ UK_RETAIL_ARBITRAGE = {
     'bmstores.co.uk': 'B&M Stores',
 }
 
+# B2B manufacturer platforms — LOW PRIORITY for Replens model.
+# These are better suited for Private Label / unbranded goods.
+# Kept for fallback but deprioritized in search and supplier ranking.
 B2B_MANUFACTURER_PLATFORMS = {
     'alibaba.com': 'Alibaba',
     'globalsources.com': 'Global Sources',
@@ -108,14 +124,14 @@ class RateLimiter:
 
 class GoogleShoppingFinder:
     """
-    Uses Google Custom Search API to find suppliers.
+    Uses Google Custom Search API to find suppliers for the Replens model.
 
-    Searches across a Google Programmable Search Engine configured with:
-    - UK FMCG wholesalers (DCS Group, Costco, Booker, Bestway, etc.)
-    - UK general merchandise wholesalers (Harrisons, Pound Wholesale, etc.)
-    - UK wholesale directories (eSources, The Wholesaler, etc.)
-    - UK retail arbitrage sources (Boots, Superdrug, Argos, Smyths, etc.)
-    - B2B manufacturer platforms (Alibaba, Global Sources, Made-in-China)
+    Prioritises UK domestic sources for branded, replenishable products:
+    1. UK FMCG wholesalers (DCS Group, Costco, Booker, Bestway, Hancocks)
+    2. UK general merchandise wholesalers (Harrisons, Pound Wholesale, PetBrands)
+    3. UK wholesale directories (eSources, The Wholesaler, Wholesale Deals)
+    4. UK retail/OA arbitrage sources (Boots, Superdrug, Argos, Smyths, B&M)
+    5. B2B manufacturer platforms (Alibaba, etc.) — lowest priority, for fallback only
     """
 
     def __init__(self):
@@ -462,7 +478,9 @@ class GoogleShoppingFinder:
             # Search query — no site: restriction needed since the Programmable
             # Search Engine is already configured to only search approved UK
             # wholesaler, B2B, and retail arbitrage sites.
-            query = f"{simplified_title} wholesale UK"
+            # Use "buy UK" instead of "wholesale" to better match branded product
+            # listings on UK wholesaler sites (Replens model = branded goods).
+            query = f"{simplified_title} buy UK"
 
             logger.info(f"Simplified: '{product_title[:60]}...' → '{simplified_title}'")
             logger.info(f"Product keywords for matching: {product_keywords}")
@@ -693,6 +711,16 @@ class GoogleShoppingFinder:
             else:
                 other_results.append(supplier)
 
+        # Replens model priority: UK domestic sources first, manufacturers last.
+        # This ensures branded product sourcing from authorized distributors
+        # takes precedence over unbranded overseas manufacturers.
+        prioritized_suppliers = (
+            uk_wholesaler_results +
+            uk_retail_results +
+            other_results +
+            manufacturer_results  # Lowest priority for Replens
+        )
+
         results = {
             'product_title': product_title,
             'uk_wholesalers': uk_wholesaler_results,
@@ -702,7 +730,7 @@ class GoogleShoppingFinder:
             # Keep backward-compatible keys
             'alibaba': [s for s in manufacturer_results if s.get('platform') == 'Alibaba'],
             'global_sources': [s for s in manufacturer_results if s.get('platform') == 'Global Sources'],
-            'all_suppliers': general_results.get('suppliers', [])
+            'all_suppliers': prioritized_suppliers,
         }
 
         logger.info(f"✓ Total suppliers found: {len(results['all_suppliers'])} (1 API call)")

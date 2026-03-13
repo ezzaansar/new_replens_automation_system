@@ -327,6 +327,7 @@ class RepricingEngine:
                         competitor_price=Decimal(str(competitor_price)) if competitor_price else None,
                         net_profit=new_profit,
                         sales_rank=product.sales_rank,
+                        data_source="repricing",
                     )
                     self.session.add(perf)
 

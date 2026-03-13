@@ -480,17 +480,21 @@ class AmazonSPAPI:
     def get_sales_data(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
         """
         Get sales data for a date range.
-        
+
+        NOT YET IMPLEMENTED — requires Reports API integration.
+        Callers should check the return value before using.
+
         Args:
             start_date: Start date for sales data
             end_date: End date for sales data
-        
+
         Returns:
-            Sales data
+            Empty dict (not implemented)
         """
-        # This would typically use the Reports API
-        # For now, return a placeholder
-        logger.info(f"Fetching sales data from {start_date} to {end_date}")
+        logger.warning(
+            "get_sales_data() is not implemented — requires SP-API Reports API. "
+            "Returning empty result. Sales data comes from Keepa rank history instead."
+        )
         return {}
     
     # ========================================================================

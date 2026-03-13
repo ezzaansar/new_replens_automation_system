@@ -309,7 +309,7 @@ class ProductDiscoveryEngine:
                     "num_sellers": int(features["avg_seller_count"]),
                     "price_stability": features["price_stability"],
                     "opportunity_score": score,
-                    "is_underserved": score >= 60,  # Threshold for underserved
+                    "is_underserved": score >= 15,  # Mark as opportunity worth sourcing
                     "estimated_cogs": profitability.get("estimated_cogs", 0),
                     "total_fees": profitability.get("total_fees", 0),
                 }
@@ -392,7 +392,7 @@ class ProductDiscoveryEngine:
             try:
                 perf = Performance(
                     asin=opp["asin"],
-                    units_sold=0,  # Unknown without order data
+                    units_sold=0,  # No real sales data — this is a discovery snapshot
                     revenue=Decimal("0"),
                     cost_of_goods=Decimal(str(opp.get("estimated_cogs", 0))),
                     amazon_fees=Decimal(str(opp.get("total_fees", 0))),
@@ -400,6 +400,7 @@ class ProductDiscoveryEngine:
                     buy_box_owned=False,
                     price=opp.get("current_price"),
                     sales_rank=opp.get("sales_rank"),
+                    data_source="discovery_snapshot",
                 )
                 self.session.add(perf)
                 self.session.commit()
@@ -420,12 +421,9 @@ class ProductDiscoveryEngine:
         logger.info("Starting Product Discovery Engine")
         logger.info(f"Timestamp: {datetime.utcnow().isoformat()}")
 
-        # If no ASINs provided, use a sample list
         if not asins:
-            asins = [
-                "B08C1K4LSV",  # Example ASIN
-                "B08C1J9L3F",  # Example ASIN
-            ]
+            logger.error("No ASINs provided. Use AutoDiscoveryEngine or pass ASINs explicitly.")
+            return 0
 
         # Discover products
         opportunities = self.discover_products(asins)
