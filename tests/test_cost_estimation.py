@@ -71,6 +71,32 @@ class TestEstimateSupplierCost:
         assert alibaba["shipping_cost"] > 0
         assert unknown["shipping_cost"] > 0
 
+    def test_uk_wholesaler_gets_domestic_shipping(self, engine):
+        product = MockProduct(price=20.00)
+        uk = engine._estimate_supplier_cost(product, {
+            "platform": "Booker Wholesale",
+            "supplier_type": "uk_wholesaler",
+            "price_data": None,
+        })
+        china = engine._estimate_supplier_cost(product, {
+            "platform": "Alibaba",
+            "supplier_type": "manufacturer",
+            "price_data": None,
+        })
+
+        # UK domestic shipping (£0.80) should be cheaper than China (£1.50)
+        assert uk["shipping_cost"] < china["shipping_cost"]
+        assert uk["shipping_cost"] == Decimal("0.80")
+
+    def test_uk_retail_gets_domestic_shipping(self, engine):
+        product = MockProduct(price=20.00)
+        retail = engine._estimate_supplier_cost(product, {
+            "platform": "Boots",
+            "supplier_type": "uk_retail",
+            "price_data": None,
+        })
+        assert retail["shipping_cost"] == Decimal("0.80")
+
 
 class TestCalculateProfitability:
     def test_profitable_product(self, engine):

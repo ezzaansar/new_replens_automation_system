@@ -835,7 +835,7 @@ class GoogleShoppingFinder:
                 parsed_url = urlparse(url)
                 hostname = parsed_url.hostname or ''
                 # Strip www. prefix for matching
-                hostname_clean = hostname.lstrip('www.')
+                hostname_clean = hostname.removeprefix('www.')
 
                 matched = False
                 for domain, (site_name, site_type) in KNOWN_SUPPLIER_SITES.items():
