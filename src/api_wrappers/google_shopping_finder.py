@@ -2,7 +2,8 @@
 Google Shopping Supplier Finder
 
 Uses Google Custom Search API to find suppliers for products.
-Searches supplier platforms like Alibaba, Global Sources, etc.
+Searches across UK wholesalers, B2B platforms, and retail arbitrage sources
+via a Google Programmable Search Engine configured with approved supplier sites.
 """
 
 import json
@@ -10,6 +11,8 @@ import logging
 import os
 import requests
 import re
+import time
+import threading
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote_plus, urlparse
@@ -19,20 +22,105 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# UK WHOLESALER & SUPPLIER SITE REGISTRY
+# ============================================================================
+
+# All sites configured in the Google Programmable Search Engine (cx)
+# Organised by category for platform detection
+
+UK_FMCG_WHOLESALERS = {
+    'dcsgroup.com': 'DCS Group',
+    'costco.co.uk': 'Costco UK',
+    'booker.co.uk': 'Booker Wholesale',
+    'bestwaywholesale.co.uk': 'Bestway Wholesale',
+    'dhamecha.com': 'Dhamecha Cash & Carry',
+    'hancocks.co.uk': 'Hancocks',
+}
+
+UK_GENERAL_WHOLESALERS = {
+    'harrisonsdirect.co.uk': 'Harrisons Direct',
+    'poundwholesale.co.uk': 'Pound Wholesale',
+    'dkwholesale.com': 'DK Wholesale',
+    'mxwholesale.co.uk': 'MX Wholesale',
+    'gemimports.co.uk': 'Gem Imports',
+    'clearance-king.co.uk': 'Clearance King',
+    'petbrands.com': 'PetBrands',
+}
+
+UK_WHOLESALE_DIRECTORIES = {
+    'esources.co.uk': 'eSources',
+    'thewholesaler.co.uk': 'The Wholesaler',
+    'wholesale-deals.co.uk': 'Wholesale Deals',
+}
+
+UK_RETAIL_ARBITRAGE = {
+    'boots.com': 'Boots',
+    'superdrug.com': 'Superdrug',
+    'argos.co.uk': 'Argos',
+    'smythstoys.com': 'Smyths Toys',
+    'homebargains.co.uk': 'Home Bargains',
+    'bmstores.co.uk': 'B&M Stores',
+}
+
+B2B_MANUFACTURER_PLATFORMS = {
+    'alibaba.com': 'Alibaba',
+    'globalsources.com': 'Global Sources',
+    'made-in-china.com': 'Made-in-China',
+    'dhgate.com': 'DHgate',
+    'tradekey.com': 'TradeKey',
+    'indiamart.com': 'IndiaMart',
+}
+
+# Combined lookup: domain → (platform_name, supplier_type)
+KNOWN_SUPPLIER_SITES: Dict[str, tuple] = {}
+for domain, name in UK_FMCG_WHOLESALERS.items():
+    KNOWN_SUPPLIER_SITES[domain] = (name, 'uk_wholesaler')
+for domain, name in UK_GENERAL_WHOLESALERS.items():
+    KNOWN_SUPPLIER_SITES[domain] = (name, 'uk_wholesaler')
+for domain, name in UK_WHOLESALE_DIRECTORIES.items():
+    KNOWN_SUPPLIER_SITES[domain] = (name, 'uk_directory')
+for domain, name in UK_RETAIL_ARBITRAGE.items():
+    KNOWN_SUPPLIER_SITES[domain] = (name, 'uk_retail')
+for domain, name in B2B_MANUFACTURER_PLATFORMS.items():
+    KNOWN_SUPPLIER_SITES[domain] = (name, 'manufacturer')
+
+
+class RateLimiter:
+    """Thread-safe rate limiter for API calls."""
+
+    def __init__(self, max_calls_per_second: float = 1.0, max_calls_per_day: int = 100):
+        self.min_interval = 1.0 / max_calls_per_second
+        self.max_daily = max_calls_per_day
+        self._lock = threading.Lock()
+        self._last_call_time = 0.0
+
+    def wait(self):
+        """Block until it's safe to make the next call."""
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call_time
+            if elapsed < self.min_interval:
+                sleep_time = self.min_interval - elapsed
+                logger.debug(f"Rate limiter: sleeping {sleep_time:.2f}s")
+                time.sleep(sleep_time)
+            self._last_call_time = time.monotonic()
+
+
 class GoogleShoppingFinder:
     """
     Uses Google Custom Search API to find suppliers.
 
-    Searches across B2B platforms:
-    - Alibaba.com
-    - GlobalSources.com
-    - Made-in-China.com
-    - TradeKey.com
-    - DHgate.com
+    Searches across a Google Programmable Search Engine configured with:
+    - UK FMCG wholesalers (DCS Group, Costco, Booker, Bestway, etc.)
+    - UK general merchandise wholesalers (Harrisons, Pound Wholesale, etc.)
+    - UK wholesale directories (eSources, The Wholesaler, etc.)
+    - UK retail arbitrage sources (Boots, Superdrug, Argos, Smyths, etc.)
+    - B2B manufacturer platforms (Alibaba, Global Sources, Made-in-China)
     """
 
     def __init__(self):
-        """Initialize Google Shopping finder."""
+        """Initialize Google Shopping finder with rate limiting."""
         if not settings.google_api_key:
             raise ValueError("Google API key not configured in .env (GOOGLE_API_KEY)")
 
@@ -43,7 +131,13 @@ class GoogleShoppingFinder:
         self.cx = settings.google_search_engine_id
         self.base_url = "https://www.googleapis.com/customsearch/v1"
 
-        logger.info("✓ Google Shopping finder initialized")
+        # Rate limiter: 1 request/second, 100/day (free tier)
+        self._rate_limiter = RateLimiter(
+            max_calls_per_second=1.0,
+            max_calls_per_day=100,
+        )
+
+        logger.info("✓ Google Shopping finder initialized (with rate limiting)")
 
     # ========================================================================
     # QUOTA TRACKING
@@ -367,12 +461,17 @@ class GoogleShoppingFinder:
             # Extract keywords for relevance checking
             product_keywords = self._extract_product_keywords(product_title)
 
-            # Build search query targeting B2B manufacturer platforms that ship to UK
-            query = f"{simplified_title} site:alibaba.com OR site:globalsources.com OR site:made-in-china.com"
+            # Search query — no site: restriction needed since the Programmable
+            # Search Engine is already configured to only search approved UK
+            # wholesaler, B2B, and retail arbitrage sites.
+            query = f"{simplified_title} wholesale UK"
 
             logger.info(f"Simplified: '{product_title[:60]}...' → '{simplified_title}'")
             logger.info(f"Product keywords for matching: {product_keywords}")
-            logger.info(f"Searching Google for: {query}")
+            logger.info(f"Searching Google CSE for: {query}")
+
+            # Rate limit before making request
+            self._rate_limiter.wait()
 
             # Make API request
             params = {
@@ -452,6 +551,8 @@ class GoogleShoppingFinder:
             logger.info(f"Alibaba search (UK shipping): '{simplified_title}' (from: '{product_title[:50]}...')")
             logger.info(f"Relevance keywords: {product_keywords}")
 
+            self._rate_limiter.wait()
+
             params = {
                 'key': self.api_key,
                 'cx': self.cx,
@@ -461,6 +562,7 @@ class GoogleShoppingFinder:
 
             response = requests.get(self.base_url, params=params, timeout=10)
             response.raise_for_status()
+            self._record_query()
             data = response.json()
 
             total_results_estimate = data.get('searchInformation', {}).get('totalResults', '0')
@@ -512,6 +614,8 @@ class GoogleShoppingFinder:
             logger.info(f"Global Sources search (UK): '{simplified_title}' (from: '{product_title[:50]}...')")
             logger.info(f"Relevance keywords: {product_keywords}")
 
+            self._rate_limiter.wait()
+
             params = {
                 'key': self.api_key,
                 'cx': self.cx,
@@ -521,6 +625,7 @@ class GoogleShoppingFinder:
 
             response = requests.get(self.base_url, params=params, timeout=10)
             response.raise_for_status()
+            self._record_query()
             data = response.json()
 
             total_results_estimate = data.get('searchInformation', {}).get('totalResults', '0')
@@ -573,30 +678,38 @@ class GoogleShoppingFinder:
         if general_results.get('quota_exceeded'):
             return {'all_suppliers': [], 'quota_exceeded': True}
 
-        # Categorize results by platform
-        alibaba_results = []
-        global_sources_results = []
+        # Categorize results by supplier type
+        uk_wholesaler_results = []
+        uk_retail_results = []
+        manufacturer_results = []
         other_results = []
 
         for supplier in general_results.get('suppliers', []):
-            platform = supplier.get('platform', '')
-            if platform == 'Alibaba':
-                alibaba_results.append(supplier)
-            elif platform == 'Global Sources':
-                global_sources_results.append(supplier)
+            stype = supplier.get('supplier_type', '')
+            if stype == 'uk_wholesaler':
+                uk_wholesaler_results.append(supplier)
+            elif stype == 'uk_retail':
+                uk_retail_results.append(supplier)
+            elif stype == 'manufacturer':
+                manufacturer_results.append(supplier)
             else:
                 other_results.append(supplier)
 
         results = {
             'product_title': product_title,
-            'alibaba': alibaba_results,
-            'global_sources': global_sources_results,
+            'uk_wholesalers': uk_wholesaler_results,
+            'uk_retail': uk_retail_results,
+            'manufacturers': manufacturer_results,
             'other': other_results,
+            # Keep backward-compatible keys
+            'alibaba': [s for s in manufacturer_results if s.get('platform') == 'Alibaba'],
+            'global_sources': [s for s in manufacturer_results if s.get('platform') == 'Global Sources'],
             'all_suppliers': general_results.get('suppliers', [])
         }
 
         logger.info(f"✓ Total suppliers found: {len(results['all_suppliers'])} (1 API call)")
-        logger.info(f"  Alibaba: {len(alibaba_results)}, Global Sources: {len(global_sources_results)}, Other: {len(other_results)}")
+        logger.info(f"  UK Wholesalers: {len(uk_wholesaler_results)}, UK Retail: {len(uk_retail_results)}, "
+                     f"Manufacturers: {len(manufacturer_results)}, Other: {len(other_results)}")
 
         return results
 
@@ -717,25 +830,25 @@ class GoogleShoppingFinder:
                         logger.debug(f"    Result text: {result_text[:100]}")
                         return None
 
-            # Detect platform from URL - ONLY accept real B2B manufacturer platforms
+            # Detect platform from URL using the known supplier site registry
             if not platform:
-                # Real B2B Manufacturer Platforms (verified to exist and ship to UK)
-                if 'alibaba.com' in url.lower():
-                    platform = 'Alibaba'
-                elif 'globalsources.com' in url.lower():
-                    platform = 'Global Sources'
-                elif 'made-in-china.com' in url.lower():
-                    platform = 'Made-in-China'
-                elif 'dhgate.com' in url.lower():
-                    platform = 'DHgate'
-                elif 'tradekey.com' in url.lower():
-                    platform = 'TradeKey'
-                elif 'indiamart.com' in url.lower():
-                    platform = 'IndiaMart'
-                else:
-                    # Reject all other sites - only manufacturers allowed
-                    logger.info(f"  ✗ FILTERED (not a manufacturer platform): {url[:80]}")
-                    return None
+                parsed_url = urlparse(url)
+                hostname = parsed_url.hostname or ''
+                # Strip www. prefix for matching
+                hostname_clean = hostname.lstrip('www.')
+
+                matched = False
+                for domain, (site_name, site_type) in KNOWN_SUPPLIER_SITES.items():
+                    if hostname_clean == domain or hostname_clean.endswith('.' + domain):
+                        platform = site_name
+                        matched = True
+                        break
+
+                if not matched:
+                    # Accept results from the CSE — it only searches approved sites
+                    # Use the hostname as the platform name
+                    platform = hostname_clean.split('.')[0].title() if hostname_clean else 'Unknown'
+                    logger.debug(f"  Unregistered but CSE-approved site: {hostname_clean}")
 
             # Extract pricing from snippet
             price_data = self._extract_price_from_snippet(snippet, title)
@@ -761,17 +874,18 @@ class GoogleShoppingFinder:
 
     def _classify_supplier_type(self, platform: str) -> str:
         """
-        Classify supplier type - only manufacturers are accepted.
+        Classify supplier type based on platform name.
 
         Args:
             platform: Platform name
 
         Returns:
-            'manufacturer' (only type accepted)
+            Supplier type string
         """
-        # Only real B2B manufacturer platforms are accepted
-        # All accepted platforms are manufacturers
-        return 'manufacturer'
+        for domain, (name, stype) in KNOWN_SUPPLIER_SITES.items():
+            if name == platform:
+                return stype
+        return 'wholesaler'
 
     def _extract_price_from_snippet(self, snippet: str, title: str) -> Optional[Dict[str, Any]]:
         """

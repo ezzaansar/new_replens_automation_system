@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # ========================================================================
     keepa_rate_limit: int = 10  # requests/second
     amazon_rate_limit: int = 5  # requests/second
+    google_rate_limit: float = 1.0  # requests/second (free tier: 100/day)
     
     # Cache Configuration
     cache_enabled: bool = True

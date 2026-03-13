@@ -119,8 +119,10 @@ class GoogleSupplierMatchingEngine:
                 supplier_infos.append(supplier_info)
                 continue
 
-            # Estimate lead time by platform
-            if platform.lower() in ('alibaba', 'made-in-china', 'dhgate'):
+            # Estimate lead time by supplier type
+            if supplier_type in ('uk_wholesaler', 'uk_retail', 'uk_directory'):
+                est_lead_time = 3  # ~3 days UK domestic
+            elif platform.lower() in ('alibaba', 'made-in-china', 'dhgate'):
                 est_lead_time = 14  # ~2 weeks from China
             elif platform.lower() in ('global sources', 'tradekey', 'indiamart'):
                 est_lead_time = 14
@@ -173,9 +175,13 @@ class GoogleSupplierMatchingEngine:
         category = (product.category or '').strip()
         cat_lower = category.lower()
 
-        # Determine shipping cost based on supplier platform
+        # Determine shipping cost based on supplier type/platform
+        supplier_type = (supplier_info.get('supplier_type', '') or '').lower()
         platform = (supplier_info.get('platform', '') or '').lower()
-        if platform in ('alibaba', 'made-in-china', 'dhgate'):
+
+        if supplier_type in ('uk_wholesaler', 'uk_retail', 'uk_directory'):
+            shipping = ESTIMATED_SHIPPING_COSTS['uk_domestic']
+        elif platform in ('alibaba', 'made-in-china', 'dhgate'):
             shipping = ESTIMATED_SHIPPING_COSTS['china_standard']
         elif platform in ('global sources', 'tradekey', 'indiamart'):
             shipping = ESTIMATED_SHIPPING_COSTS['china_standard']
@@ -365,21 +371,29 @@ class GoogleSupplierMatchingEngine:
         return {
             'all_suppliers': [
                 {
+                    'platform': 'Booker Wholesale',
+                    'name': 'Booker Wholesale (UK)',
+                    'url': 'https://www.booker.co.uk',
+                    'supplier_type': 'uk_wholesaler',
+                    'price_data': None,
+                    'description': 'UK cash & carry. Costs auto-estimated from category ratios.'
+                },
+                {
+                    'platform': 'DCS Group',
+                    'name': 'DCS Group (UK Health/Beauty Distributor)',
+                    'url': 'https://www.dcsgroup.com',
+                    'supplier_type': 'uk_wholesaler',
+                    'price_data': None,
+                    'description': 'UK health, beauty & household distributor. Costs auto-estimated.'
+                },
+                {
                     'platform': 'Alibaba',
                     'name': 'Alibaba Wholesale Marketplace',
                     'url': 'https://www.alibaba.com',
-                    'supplier_type': 'wholesaler',
+                    'supplier_type': 'manufacturer',
                     'price_data': None,
                     'description': 'B2B wholesale marketplace. Costs auto-estimated from category ratios.'
                 },
-                {
-                    'platform': 'Global Sources',
-                    'name': 'Global Sources Trade Platform',
-                    'url': 'https://www.globalsources.com',
-                    'supplier_type': 'wholesaler',
-                    'price_data': None,
-                    'description': 'B2B trade platform. Costs auto-estimated from category ratios.'
-                }
             ]
         }
 
